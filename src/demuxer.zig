@@ -10,6 +10,7 @@ pub const Demuxer = struct {
         const success: c_int = ffmpeg.avformat_open_input(&avCtx, file_path, null, null);
         if (success == 0) {
             std.log.debug("AVFormatContext {s} opened", .{file_path});
+            std.log.debug("Streams: {d}", .{avCtx.?.nb_streams});
             return .{ .avctx = avCtx };
         }
 
