@@ -3,7 +3,8 @@ const Io = std.Io;
 const ffmpeg = @import("ffmpeg.zig");
 const Demuxer = @import("demuxer.zig").Demuxer;
 const Decoder = @import("decoder.zig").Decoder;
-const FrameReader = @import("frame-reader.zig").FrameReader;
+const FrameReader = @import("reader.zig").FrameReader;
+const FrameRenderer = @import("renderer.zig").FrameRenderer;
 
 pub fn main(init: std.process.Init) !void {
     const arena: std.mem.Allocator = init.arena.allocator();
@@ -21,9 +22,10 @@ pub fn main(init: std.process.Init) !void {
     var demuxer = try Demuxer.init(file_path);
     var decoder = try Decoder.init(&demuxer);
     var reader = try FrameReader.init(&demuxer, &decoder);
+    var renderer = FrameRenderer.init();
 
     while (reader.next()) |frame| {
-        _ = frame;
+        try renderer.render(frame);
     } else |err| {
         if (err == error.EOF) {
             std.log.info("EOF reached", .{});

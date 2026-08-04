@@ -24,6 +24,7 @@ pub const Demuxer = struct {
         ffmpeg.avformat_close_input(&self.avctx);
     }
 
+    /// Reads the next encoded packet from the file
     pub fn readPacket(self: *@This()) !*ffmpeg.AVPacket {
         if (self.avctx == null) {
             return error.ErrorNoAVContext;
