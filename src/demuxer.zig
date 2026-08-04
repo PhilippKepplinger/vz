@@ -3,7 +3,7 @@ const ffmpeg = @import("ffmpeg.zig").ffmpeg;
 
 pub const Demuxer = struct {
     avctx: ?*ffmpeg.AVFormatContext = null,
-    avpkt: ffmpeg.AVPacket = undefined,
+    avpkt: *ffmpeg.AVPacket,
 
     pub fn init(file_path: [:0]const u8) !Demuxer {
         var avCtx: ?*ffmpeg.AVFormatContext = null;
@@ -11,7 +11,10 @@ pub const Demuxer = struct {
         if (success == 0) {
             std.log.debug("AVFormatContext {s} opened", .{file_path});
             std.log.debug("Streams: {d}", .{avCtx.?.nb_streams});
-            return .{ .avctx = avCtx };
+            return .{
+                .avctx = avCtx,
+                .avpkt = ffmpeg.av_packet_alloc(),
+            };
         }
 
         return error.ErrorOpeningFile;
@@ -27,10 +30,10 @@ pub const Demuxer = struct {
             return error.ErrorNoAVContext;
         }
 
-        const success = ffmpeg.av_read_frame(self.avctx, &self.avpkt);
+        const success = ffmpeg.av_read_frame(self.avctx, self.avpkt);
         if (success == 0) {
-            std.log.debug("packet read, size: {d}, stream: {d}", .{ self.avpkt.size, self.avpkt.stream_index });
-            return &self.avpkt;
+            std.log.debug("packet read, size: {d}, stream: {d}, index: {d}", .{ self.avpkt.size, self.avpkt.stream_index, self.avpkt.pos });
+            return self.avpkt;
         }
 
         return error.ErrorReadPacket;

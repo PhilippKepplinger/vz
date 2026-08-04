@@ -4,16 +4,17 @@ const ffmpeg = @import("ffmpeg.zig").ffmpeg;
 
 pub const DecodingError = error{ PackageReadError, MissingFormatContext, CodecNotFound, DecoderNotFound, EndOfFile, DecodingError };
 
-const StreamInfo = struct {
+const StreamContext = struct {
     codec: *ffmpeg.AVCodecContext,
     stream_index: usize,
 };
 
 pub const Decoder = struct {
     demuxer: *Demuxer,
-    videoInfo: StreamInfo,
-    audioInfo: StreamInfo,
+    videoInfo: StreamContext,
+    audioInfo: StreamContext,
     avframe: *ffmpeg.AVFrame,
+    lastUsedCodec: ?*ffmpeg.AVCodecContext = null,
 
     pub fn init(demuxer: *Demuxer) !Decoder {
         return .{
@@ -24,15 +25,15 @@ pub const Decoder = struct {
         };
     }
 
-    fn initVideoCodecContext(demuxer: *Demuxer) DecodingError!StreamInfo {
+    fn initVideoCodecContext(demuxer: *Demuxer) DecodingError!StreamContext {
         return try initCodecContext(demuxer, ffmpeg.AVMEDIA_TYPE_VIDEO);
     }
 
-    fn initAudioCodecContext(demuxer: *Demuxer) DecodingError!StreamInfo {
+    fn initAudioCodecContext(demuxer: *Demuxer) DecodingError!StreamContext {
         return try initCodecContext(demuxer, ffmpeg.AVMEDIA_TYPE_AUDIO);
     }
 
-    fn initCodecContext(demuxer: *Demuxer, codecType: c_int) DecodingError!StreamInfo {
+    fn initCodecContext(demuxer: *Demuxer, codecType: c_int) DecodingError!StreamContext {
         const avctx = demuxer.avctx.?;
         var codec_id: c_uint = 0;
         var stream_index: usize = 0;
@@ -68,8 +69,16 @@ pub const Decoder = struct {
     }
 
     pub fn decodeFrame(self: *@This()) DecodingError!*ffmpeg.AVFrame {
+        while (self.lastUsedCodec == null) {
+            const packet = self.demuxer.readPacket() catch {
+                return DecodingError.PackageReadError;
+            };
+            try self.decodePacket(packet);
+        }
+
         // check if frame present
-        var result = ffmpeg.avcodec_receive_frame(self.videoInfo.codec, self.avframe);
+        // TODO decide for video and audio codecs
+        var result = ffmpeg.avcodec_receive_frame(self.lastUsedCodec.?, self.avframe);
 
         // EAGAIN means send another packet
         while (result == ffmpeg.AVERROR(ffmpeg.EAGAIN)) {
@@ -80,7 +89,7 @@ pub const Decoder = struct {
             try self.decodePacket(packet);
 
             // check again if frame is present
-            result = ffmpeg.avcodec_receive_frame(self.videoInfo.codec, self.avframe);
+            result = ffmpeg.avcodec_receive_frame(self.lastUsedCodec.?, self.avframe);
         }
 
         if (result == 0) {
@@ -100,10 +109,8 @@ pub const Decoder = struct {
     fn decodePacket(self: *@This(), pkt: *ffmpeg.AVPacket) DecodingError!void {
         var codec: ?*ffmpeg.AVCodecContext = null;
         if (pkt.stream_index == self.videoInfo.stream_index) {
-            std.log.debug("use video codec", .{});
             codec = self.videoInfo.codec;
         } else if (pkt.stream_index == self.audioInfo.stream_index) {
-            std.log.debug("use audio codec", .{});
             codec = self.audioInfo.codec;
         }
 
@@ -111,6 +118,7 @@ pub const Decoder = struct {
             return; // TODO what should happen? Skip packet for now..
         }
 
+        self.lastUsedCodec = codec.?;
         const result = ffmpeg.avcodec_send_packet(codec, pkt);
 
         if (result != 0) {
