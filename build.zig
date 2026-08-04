@@ -54,6 +54,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    exe.root_module.linkSystemLibrary("avutil", .{});
     exe.root_module.linkSystemLibrary("avformat", .{});
     exe.root_module.linkSystemLibrary("avcodec", .{});
     exe.root_module.linkSystemLibrary("swscale", .{});
