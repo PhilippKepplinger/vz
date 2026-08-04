@@ -3,26 +3,25 @@ const ffmpeg = @import("ffmpeg.zig").ffmpeg;
 
 pub const Demuxer = struct {
     avctx: ?*ffmpeg.AVFormatContext = null,
-    avpkt: *ffmpeg.AVPacket,
+    currentPacket: *ffmpeg.AVPacket,
 
     pub fn init(file_path: [:0]const u8) !Demuxer {
-        var avCtx: ?*ffmpeg.AVFormatContext = null;
-        const success: c_int = ffmpeg.avformat_open_input(&avCtx, file_path, null, null);
-        if (success == 0) {
+        var avctx: ?*ffmpeg.AVFormatContext = null;
+        const success: c_int = ffmpeg.avformat_open_input(&avctx, file_path, null, null);
+        if (avctx != null and success == 0) {
             std.log.debug("AVFormatContext {s} opened", .{file_path});
-            std.log.debug("Streams: {d}", .{avCtx.?.nb_streams});
+            std.log.debug("Streams: {d}", .{avctx.?.nb_streams});
             return .{
-                .avctx = avCtx,
-                .avpkt = ffmpeg.av_packet_alloc(),
+                .avctx = avctx,
+                .currentPacket = ffmpeg.av_packet_alloc(),
             };
         }
 
         return error.ErrorOpeningFile;
     }
 
-    pub fn close(self: @This()) void {
-        var tmp: ?*ffmpeg.AVFormatContext = self.avctx;
-        ffmpeg.avformat_close_input(&tmp);
+    pub fn close(self: *@This()) void {
+        ffmpeg.avformat_close_input(&self.avctx);
     }
 
     pub fn readPacket(self: *@This()) !*ffmpeg.AVPacket {
@@ -30,12 +29,14 @@ pub const Demuxer = struct {
             return error.ErrorNoAVContext;
         }
 
-        const success = ffmpeg.av_read_frame(self.avctx, self.avpkt);
-        if (success == 0) {
-            std.log.debug("packet read, size: {d}, stream: {d}, index: {d}", .{ self.avpkt.size, self.avpkt.stream_index, self.avpkt.pos });
-            return self.avpkt;
+        const result = ffmpeg.av_read_frame(self.avctx, self.currentPacket);
+        if (result == ffmpeg.AVERROR_EOF) {
+            return error.EOF;
+        }
+        if (result != 0) {
+            std.log.err("read packet error: {d}", .{result});
         }
 
-        return error.ErrorReadPacket;
+        return self.currentPacket;
     }
 };

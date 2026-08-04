@@ -2,26 +2,33 @@ const std = @import("std");
 const Demuxer = @import("demuxer.zig").Demuxer;
 const ffmpeg = @import("ffmpeg.zig").ffmpeg;
 
-pub const DecodingError = error{ PackageReadError, MissingFormatContext, CodecNotFound, DecoderNotFound, EndOfFile, DecodingError };
+pub const DecodingError = error{
+    DecoderNotFound,
+    DecodingError,
+    UnknownPacket,
+    ReceiveFrameRequired,
+    EndOfFile,
+};
 
 const StreamContext = struct {
     codec: *ffmpeg.AVCodecContext,
-    stream_index: usize,
+    stream_index: c_int,
 };
 
 pub const Decoder = struct {
     demuxer: *Demuxer,
     videoInfo: StreamContext,
     audioInfo: StreamContext,
-    avframe: *ffmpeg.AVFrame,
-    lastUsedCodec: ?*ffmpeg.AVCodecContext = null,
+
+    activeCodec: *ffmpeg.AVCodecContext = undefined,
+    currentFrame: *ffmpeg.AVFrame,
 
     pub fn init(demuxer: *Demuxer) !Decoder {
         return .{
             .demuxer = demuxer,
             .videoInfo = try initVideoCodecContext(demuxer),
             .audioInfo = try initAudioCodecContext(demuxer),
-            .avframe = ffmpeg.av_frame_alloc(),
+            .currentFrame = ffmpeg.av_frame_alloc(),
         };
     }
 
@@ -36,11 +43,12 @@ pub const Decoder = struct {
     fn initCodecContext(demuxer: *Demuxer, codecType: c_int) DecodingError!StreamContext {
         const avctx = demuxer.avctx.?;
         var codec_id: c_uint = 0;
-        var stream_index: usize = 0;
+        var stream_index: c_int = 0;
         var codecpars: ?*ffmpeg.AVCodecParameters = null;
+
         for (0..avctx.nb_streams) |i| {
             if (avctx.streams[i].*.codecpar.*.codec_type == codecType) {
-                stream_index = i;
+                stream_index = avctx.streams[i].*.index;
                 codec_id = avctx.streams[i].*.codecpar.*.codec_id;
                 codecpars = avctx.streams[i].*.codecpar;
                 std.log.debug("codec_id: {d}, stream: {d}", .{ codec_id, i });
@@ -68,62 +76,50 @@ pub const Decoder = struct {
         return DecodingError.DecoderNotFound;
     }
 
-    pub fn decodeFrame(self: *@This()) DecodingError!*ffmpeg.AVFrame {
-        while (self.lastUsedCodec == null) {
-            const packet = self.demuxer.readPacket() catch {
-                return DecodingError.PackageReadError;
-            };
-            try self.decodePacket(packet);
-        }
+    /// sends a packet to the decoder and returns the used codec context
+    /// returns true if a frame is fully decoded, false => more packets required
+    pub fn decodePacket(self: *@This(), pkt: *ffmpeg.AVPacket) DecodingError!bool {
+        self.activeCodec = self.selectCodec(pkt.stream_index) catch {
+            return true; // if the codec is unknown, needs more data => true
+        };
 
-        // check if frame present
-        // TODO decide for video and audio codecs
-        var result = ffmpeg.avcodec_receive_frame(self.lastUsedCodec.?, self.avframe);
-
-        // EAGAIN means send another packet
-        while (result == ffmpeg.AVERROR(ffmpeg.EAGAIN)) {
-            // send next packet into the decoder
-            const packet = self.demuxer.readPacket() catch {
-                return DecodingError.PackageReadError;
-            };
-            try self.decodePacket(packet);
-
-            // check again if frame is present
-            result = ffmpeg.avcodec_receive_frame(self.lastUsedCodec.?, self.avframe);
-        }
-
-        if (result == 0) {
-            std.log.debug("decoded frame: {d}x{d}", .{ self.avframe.width, self.avframe.height });
-            return self.avframe;
-        }
+        const result = ffmpeg.avcodec_send_packet(self.activeCodec, pkt);
 
         if (result == ffmpeg.AVERROR_EOF) {
-            std.log.debug("Reached EOF", .{});
             return DecodingError.EndOfFile;
         }
-
-        std.log.err("Decoding error: {d}", .{result});
-        return DecodingError.DecodingError; // TODO handle EOF
-    }
-
-    fn decodePacket(self: *@This(), pkt: *ffmpeg.AVPacket) DecodingError!void {
-        var codec: ?*ffmpeg.AVCodecContext = null;
-        if (pkt.stream_index == self.videoInfo.stream_index) {
-            codec = self.videoInfo.codec;
-        } else if (pkt.stream_index == self.audioInfo.stream_index) {
-            codec = self.audioInfo.codec;
-        }
-
-        if (codec == null) {
-            return; // TODO what should happen? Skip packet for now..
-        }
-
-        self.lastUsedCodec = codec.?;
-        const result = ffmpeg.avcodec_send_packet(codec, pkt);
-
-        if (result != 0) {
+        if (result != 0 and result != ffmpeg.AVERROR(ffmpeg.EAGAIN)) {
             std.log.err("Error decodePacket: {d}", .{result});
             return DecodingError.DecodingError;
         }
+
+        return result == 0;
+    }
+
+    /// determines if the audio or video codec context is needed
+    fn selectCodec(self: *@This(), streamIndex: c_int) !*ffmpeg.AVCodecContext {
+        if (streamIndex == self.videoInfo.stream_index) {
+            return self.videoInfo.codec;
+        }
+        if (streamIndex == self.audioInfo.stream_index) {
+            return self.audioInfo.codec;
+        }
+
+        return error.UnsupportedStream;
+    }
+
+    /// receives a decoded frame
+    /// EAGAIN => no frame readey, use decodePacket to feed the decoder
+    /// EOF => no more frames available
+    pub fn receiveFrame(self: *@This()) !*ffmpeg.AVFrame {
+        const result = ffmpeg.avcodec_receive_frame(self.activeCodec, self.currentFrame);
+        if (result == ffmpeg.AVERROR_EOF) {
+            return error.EOF;
+        }
+        if (result == ffmpeg.AVERROR(ffmpeg.EAGAIN)) {
+            return error.EAGAIN;
+        }
+
+        return self.currentFrame;
     }
 };

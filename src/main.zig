@@ -3,6 +3,7 @@ const Io = std.Io;
 const ffmpeg = @import("ffmpeg.zig");
 const Demuxer = @import("demuxer.zig").Demuxer;
 const Decoder = @import("decoder.zig").Decoder;
+const FrameReader = @import("frame-reader.zig").FrameReader;
 
 pub fn main(init: std.process.Init) !void {
     const arena: std.mem.Allocator = init.arena.allocator();
@@ -13,15 +14,20 @@ pub fn main(init: std.process.Init) !void {
         return error.NoFileSpecified;
     }
 
+    // zero terminate file path
     const file_path = args[1][0.. :0];
     std.log.debug("open file: {s}", .{file_path});
 
     var demuxer = try Demuxer.init(file_path);
     var decoder = try Decoder.init(&demuxer);
+    var reader = try FrameReader.init(&demuxer, &decoder);
 
-    var frame = try decoder.decodeFrame(); // TODO handle errors
-    while (true) { // TODO handle EOF
-        frame = try decoder.decodeFrame();
+    while (reader.next()) |frame| {
+        _ = frame;
+    } else |err| {
+        if (err == error.EOF) {
+            std.log.info("EOF reached", .{});
+        }
     }
 
     demuxer.close();
