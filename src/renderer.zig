@@ -47,7 +47,9 @@ pub const FrameRenderer = struct {
                 try self.writer.interface.print("{u}", .{char});
             }
 
-            try self.writer.interface.writeByte('\n');
+            if (row < self.height() - 1) {
+                try self.writer.interface.writeByte('\n');
+            }
         }
     }
 
