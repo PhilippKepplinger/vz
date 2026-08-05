@@ -37,6 +37,9 @@ pub const FrameRenderer = struct {
         const terminalHeight: usize = @as(u64, @intCast(frame.height)) / 2;
         for (0..terminalHeight) |row| {
             for (0..@intCast(frame.width)) |col| {
+                if (col >= self.width()) {
+                    continue;
+                }
                 const top = pixels[2 * row * linesize + col];
                 const bottom = pixels[(2 * row + 1) * linesize + col];
                 const char = getChar(top, bottom);
@@ -44,7 +47,7 @@ pub const FrameRenderer = struct {
                 try self.writer.interface.print("{u}", .{char});
             }
 
-            try self.moveTo(row, 0);
+            try self.writer.interface.writeByte('\n');
         }
     }
 
