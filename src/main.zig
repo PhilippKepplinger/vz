@@ -12,7 +12,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Accessing command line arguments:
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 1) {
+    if (args.len <= 1) {
         return error.NoFileSpecified;
     }
 
