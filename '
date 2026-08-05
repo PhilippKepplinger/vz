@@ -1,0 +1,63 @@
+const std = @import("std");
+const ffmpeg = @import("ffmpeg.zig").ffmpeg;
+const scaler = @import("scaler.zig");
+
+pub const FrameRenderer = struct {
+    ws: std.posix.winsize = undefined,
+    io: std.Io,
+    writer: std.Io.File.Writer,
+
+    pub fn init(io: std.Io, buffer: []u8) FrameRenderer {
+        var ws: std.posix.winsize = undefined;
+        _ = std.os.linux.ioctl(std.posix.STDOUT_FILENO, std.os.linux.T.IOCGWINSZ, @intFromPtr(&ws));
+
+        std.log.debug("window size: {d}x{d}", .{ ws.col, ws.row });
+
+        return .{
+            .io = io,
+            .ws = ws,
+            .writer = std.Io.File.stdout().writer(io, buffer),
+        };
+    }
+
+    pub fn width(self: *@This()) u16 {
+        return self.ws.col;
+    }
+
+    pub fn height(self: *@This()) u16 {
+        return self.ws.row;
+    }
+
+    pub fn render(self: *@This(), frame: *ffmpeg.AVFrame) !void {
+        const pixels = frame.data[0];
+        const linesize = frame.linesize[0];
+
+        for (0..frame.width) |row| {
+            for (0..self.ws.col) |col| {
+                // TODO write a full row
+                // then
+
+                const brightnessTop = pixels[row * linesize + col];
+                const brightnessBottom = pixels[(row + 1) * linesize + col];
+                try self.writer.interface.writeByte(0);
+            }
+        }
+    }
+
+    pub fn clear(self: *@This()) !void {
+        try self.writer.interface.writeAll("\x1b[2J");
+    }
+
+    pub fn writeCharAt(self: *@This(), char: u8, row: usize, col: usize) !void {
+        try self.moveTo(row, col);
+        try self.writer.interface.writeByte(char);
+    }
+
+    fn toHome(self: *@This()) !void {
+        try self.writer.interface.writeAll("\x1b[H");
+    }
+
+    fn moveTo(self: @This(), row: usize, col: usize) !void {
+        try self.writer.interface.print("\x1b[{};{}H", .{ row + 1, col + 1 });
+    }
+};
