@@ -32,6 +32,8 @@ pub fn main(init: std.process.Init) !void {
         ffmpeg.AV_PIX_FMT_GRAY8,
     );
 
+    try renderer.clear();
+
     while (reader.next()) |frame| {
         if (frame.width > 0) { // video frame
             const scaledFrame = try scaler.scale(frame);
