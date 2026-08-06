@@ -10,15 +10,10 @@ pub const DecodingError = error{
     EndOfFile,
 };
 
-const StreamContext = struct {
-    codec: *ffmpeg.AVCodecContext,
-    stream: *ffmpeg.AVStream,
-};
-
 pub const Decoder = struct {
     mediaCtx: *mctx.MediaContext,
-    videoInfo: StreamContext,
-    audioInfo: StreamContext,
+    videoCodec: *ffmpeg.AVCodecContext,
+    audioCodec: *ffmpeg.AVCodecContext,
 
     activeCodec: *ffmpeg.AVCodecContext = undefined,
     currentFrame: *ffmpeg.AVFrame,
@@ -26,21 +21,21 @@ pub const Decoder = struct {
     pub fn init(mediaCtx: *mctx.MediaContext) !Decoder {
         return .{
             .mediaCtx = mediaCtx,
-            .videoInfo = try initVideoCodecContext(mediaCtx),
-            .audioInfo = try initAudioCodecContext(mediaCtx),
+            .videoCodec = try initVideoCodecContext(mediaCtx),
+            .audioCodec = try initAudioCodecContext(mediaCtx),
             .currentFrame = ffmpeg.av_frame_alloc(),
         };
     }
 
-    fn initVideoCodecContext(mediaCtx: *mctx.MediaContext) DecodingError!StreamContext {
+    fn initVideoCodecContext(mediaCtx: *mctx.MediaContext) DecodingError!*ffmpeg.AVCodecContext {
         return try initCodecContext(mediaCtx.videoStream);
     }
 
-    fn initAudioCodecContext(mediaCtx: *mctx.MediaContext) DecodingError!StreamContext {
+    fn initAudioCodecContext(mediaCtx: *mctx.MediaContext) DecodingError!*ffmpeg.AVCodecContext {
         return try initCodecContext(mediaCtx.audioStream);
     }
 
-    fn initCodecContext(stream: *ffmpeg.AVStream) DecodingError!StreamContext {
+    fn initCodecContext(stream: *ffmpeg.AVStream) DecodingError!*ffmpeg.AVCodecContext {
         const codec = ffmpeg.avcodec_find_decoder(stream.codecpar.*.codec_id);
         const codecCtx = ffmpeg.avcodec_alloc_context3(codec);
         if (stream.codecpar) |pars| {
@@ -53,10 +48,7 @@ pub const Decoder = struct {
         const success = ffmpeg.avcodec_open2(codecCtx, codec, null);
         if (success == 0) {
             std.log.debug("decoder initialized: {s}", .{codecCtx.*.codec.*.long_name});
-            return .{
-                .codec = codecCtx,
-                .stream = stream,
-            };
+            return codecCtx;
         }
 
         return DecodingError.DecoderNotFound;
@@ -84,11 +76,11 @@ pub const Decoder = struct {
 
     /// determines if the audio or video codec context is needed
     fn selectCodec(self: *@This(), streamIndex: c_int) !*ffmpeg.AVCodecContext {
-        if (streamIndex == self.videoInfo.stream.index) {
-            return self.videoInfo.codec;
+        if (streamIndex == self.mediaCtx.videoStream.index) {
+            return self.videoCodec;
         }
-        if (streamIndex == self.audioInfo.stream.index) {
-            return self.audioInfo.codec;
+        if (streamIndex == self.mediaCtx.audioStream.index) {
+            return self.audioCodec;
         }
 
         return error.UnsupportedStream;

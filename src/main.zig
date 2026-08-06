@@ -10,6 +10,7 @@ const renderer = @import("renderer.zig");
 const FrameRenderer = renderer.FrameRenderer;
 
 pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     const arena: std.mem.Allocator = init.arena.allocator();
 
     // Accessing command line arguments:
@@ -25,30 +26,53 @@ pub fn main(init: std.process.Init) !void {
     var renderBuffer: [512]u8 = undefined;
     const renderMode = getMode(args);
 
+    // move all this to a player struct in the future
     var mediaCtx = try mctx.MediaContext.init(file_path);
     var demuxer = try Demuxer.init(&mediaCtx);
     var decoder = try Decoder.init(&mediaCtx);
     var reader = try FrameReader.init(&demuxer, &decoder);
-    var frameRenderer = FrameRenderer.init(init.io, renderMode, renderBuffer[0..]);
+    var frameRenderer = FrameRenderer.init(io, renderMode, &mediaCtx, renderBuffer[0..]);
     var scaler = try FrameScaler.init(
-        decoder.videoInfo.codec,
+        decoder.videoCodec,
         frameRenderer.width(),
-        frameRenderer.height() * 2, // use twice the height because terminal cells are twice as higher than wide
-        ffmpeg.AV_PIX_FMT_GRAY8,
+        frameRenderer.height() * 2, // use twice the height because terminal cells are twice as high than wide
+        ffmpeg.AV_PIX_FMT_GRAY8, // maybe change in the future
     );
 
     try frameRenderer.clear();
 
+    const clock = std.Io.Clock.real;
+    const frameTimeNs: i96 = @divTrunc(@as(i96, @intCast(mediaCtx.videoStream.time_base.num)) * 1_000_000_000, @as(i96, @intCast(mediaCtx.videoStream.time_base.den)));
+    const startTimeNs = clock.now(io).toNanoseconds();
+    var currentTimeNs: i96 = 0; // current elapsed time
+    var targetTimeNs: i96 = 0; // when a frame needs to be rendered
+
+    // example:
+    // time_base = 1/24000 = 0.041667 s
+    // frame_time = 1/24000 * 1_000_000_000
+    // pts = 1001, 2002, usw.
+    // target time = pts * frame_time = 1001 / 24000
+
+    // render pipeline
     while (reader.next()) |frame| {
         if (frame.width > 0) { // video frame
             const scaledFrame = try scaler.scale(frame);
+
+            // calculate and await time to next frame render
+            targetTimeNs = frame.pts * frameTimeNs;
+            currentTimeNs = clock.now(io).toNanoseconds() - startTimeNs;
+            if (currentTimeNs < targetTimeNs) {
+                const duration = std.Io.Duration.fromNanoseconds(targetTimeNs - currentTimeNs);
+                try std.Io.sleep(io, duration, clock);
+            }
+
             try frameRenderer.render(scaledFrame);
         } else {
             // TODO audio frame
         }
     } else |err| {
         if (err == error.EOF) {
-            std.log.info("EOF reached", .{});
+            std.log.info("\nEOF reached", .{});
         }
     }
 

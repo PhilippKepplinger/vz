@@ -1,6 +1,7 @@
 const std = @import("std");
 const ffmpeg = @import("ffmpeg.zig").ffmpeg;
 const scaler = @import("scaler.zig");
+const mctx = @import("media-context.zig");
 
 pub const RenderMode = enum {
     GRAY,
@@ -8,12 +9,13 @@ pub const RenderMode = enum {
 };
 
 pub const FrameRenderer = struct {
+    mediaCtx: *mctx.MediaContext,
     mode: RenderMode,
     ws: std.posix.winsize = undefined,
     io: std.Io,
     writer: std.Io.File.Writer,
 
-    pub fn init(io: std.Io, mode: RenderMode, buffer: []u8) FrameRenderer {
+    pub fn init(io: std.Io, mode: RenderMode, mediaCtx: *mctx.MediaContext, buffer: []u8) FrameRenderer {
         var ws: std.posix.winsize = undefined;
         _ = std.os.linux.ioctl(std.posix.STDOUT_FILENO, std.os.linux.T.IOCGWINSZ, @intFromPtr(&ws));
 
@@ -22,6 +24,7 @@ pub const FrameRenderer = struct {
         return .{
             .io = io,
             .ws = ws,
+            .mediaCtx = mediaCtx,
             .writer = std.Io.File.stdout().writer(io, buffer),
             .mode = mode,
         };
@@ -35,6 +38,8 @@ pub const FrameRenderer = struct {
         return self.ws.row;
     }
 
+    /// renders a frame row by row to the terminal
+    /// two pixel rows a rendered in a single terminal row to keep aspect ratio
     pub fn render(self: *@This(), frame: *ffmpeg.AVFrame) !void {
         try self.toHome();
 
@@ -99,6 +104,7 @@ pub const FrameRenderer = struct {
 
     fn getChar(top: u8, bottom: u8, level: u8) u21 {
         const i = @divTrunc(level, 31) - 1;
+        // evaluate pixel
         const veryTopHeavy = top > bottom and top - bottom > 80;
         const topHeavy = top > bottom and top - bottom > 30;
         const balanced = (top > bottom and top - bottom <= 30) or (top < bottom and bottom - top <= 30);

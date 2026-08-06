@@ -1,10 +1,6 @@
 const std = @import("std");
 const ffmpeg = @import("ffmpeg.zig").ffmpeg;
 
-pub const VideoContext = struct {
-    stream: *ffmpeg.AVStream,
-};
-
 pub const MediaContext = struct {
     formatCtx: ?*ffmpeg.AVFormatContext = null,
     videoStream: *ffmpeg.AVStream,

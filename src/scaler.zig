@@ -6,7 +6,6 @@ pub const FrameScaler = struct {
     scaledFrame: *ffmpeg.AVFrame,
 
     pub fn init(srcCodec: *ffmpeg.AVCodecContext, width: c_int, height: c_int, format: c_int) !FrameScaler {
-        // TODO keep aspect ratio
         const srcAspect = getSrcAspect(srcCodec);
         const isScaleByHeight = scaleByHeight(srcCodec, width, height);
 
@@ -24,7 +23,7 @@ pub const FrameScaler = struct {
                 @intFromFloat(destWidth),
                 @intFromFloat(destHeight),
                 format,
-                ffmpeg.SWS_BILINEAR,
+                ffmpeg.SWS_FAST_BILINEAR,
                 null,
                 null,
                 null,
@@ -55,7 +54,6 @@ pub const FrameScaler = struct {
             return error.ScalingError;
         }
 
-        //std.log.debug("scaled frame: {d}x{d}", .{ self.scaledFrame.width, self.scaledFrame.height });
         return self.scaledFrame;
     }
 };
