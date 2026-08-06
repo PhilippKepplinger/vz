@@ -1,6 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 const ffmpeg = @import("ffmpeg.zig").ffmpeg;
+const mctx = @import("media-context.zig");
 const Demuxer = @import("demuxer.zig").Demuxer;
 const Decoder = @import("decoder.zig").Decoder;
 const FrameReader = @import("reader.zig").FrameReader;
@@ -24,8 +25,9 @@ pub fn main(init: std.process.Init) !void {
     var renderBuffer: [512]u8 = undefined;
     const renderMode = getMode(args);
 
-    var demuxer = try Demuxer.init(file_path);
-    var decoder = try Decoder.init(&demuxer);
+    var mediaCtx = try mctx.MediaContext.init(file_path);
+    var demuxer = try Demuxer.init(&mediaCtx);
+    var decoder = try Decoder.init(&mediaCtx);
     var reader = try FrameReader.init(&demuxer, &decoder);
     var frameRenderer = FrameRenderer.init(init.io, renderMode, renderBuffer[0..]);
     var scaler = try FrameScaler.init(
@@ -50,7 +52,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    demuxer.close();
+    mediaCtx.close();
 }
 
 fn getMode(args: []const [:0]const u8) renderer.RenderMode {
@@ -58,7 +60,6 @@ fn getMode(args: []const [:0]const u8) renderer.RenderMode {
         if (std.mem.eql(u8, arg, "-m")) {
             if (std.mem.eql(u8, args[i + 1], "0")) return renderer.RenderMode.ASCII;
             if (std.mem.eql(u8, args[i + 1], "1")) return renderer.RenderMode.GRAY;
-            if (std.mem.eql(u8, args[i + 1], "2")) return renderer.RenderMode.COMIC;
         }
     }
 

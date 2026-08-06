@@ -5,7 +5,6 @@ const scaler = @import("scaler.zig");
 pub const RenderMode = enum {
     GRAY,
     ASCII,
-    COMIC,
 };
 
 pub const FrameRenderer = struct {
@@ -53,7 +52,6 @@ pub const FrameRenderer = struct {
 
                 switch (self.mode) {
                     RenderMode.GRAY => try self.renderGray(top, bottom),
-                    RenderMode.COMIC => try self.renderCOMIC(top, bottom),
                     RenderMode.ASCII => try self.renderASCII(top, bottom),
                 }
             }
@@ -117,39 +115,6 @@ pub const FrameRenderer = struct {
         } else {
             return "..,_jypq"[i];
         }
-    }
-
-    fn renderCOMIC(self: *@This(), top: u8, bottom: u8) !void {
-        const char = getBlockChar(top, bottom);
-        try self.writer.interface.print("{u}", .{char});
-    }
-
-    fn getBlockChar(top: u8, bottom: u8) u21 {
-        const topLevel = brightnessLevel(top);
-        const bottomLevel = brightnessLevel(bottom);
-
-        if (topLevel == bottomLevel) {
-            return switch (topLevel) {
-                0 => ' ',
-                1 => '░',
-                2 => '▒',
-                else => '█',
-            };
-        }
-
-        if (topLevel > bottomLevel) {
-            if (topLevel == 3 and bottomLevel >= 2) {
-                return '▓';
-            } else {
-                return '▀';
-            }
-        }
-
-        if (bottomLevel == 3 and topLevel >= 2) {
-            return '▓';
-        }
-
-        return '▄';
     }
 
     fn brightnessLevel(value: u8) u8 {

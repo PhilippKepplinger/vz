@@ -1,5 +1,5 @@
 const std = @import("std");
-const Demuxer = @import("demuxer.zig").Demuxer;
+const mctx = @import("media-context.zig");
 const ffmpeg = @import("ffmpeg.zig").ffmpeg;
 
 pub const DecodingError = error{
@@ -12,52 +12,38 @@ pub const DecodingError = error{
 
 const StreamContext = struct {
     codec: *ffmpeg.AVCodecContext,
-    stream_index: c_int,
+    stream: *ffmpeg.AVStream,
 };
 
 pub const Decoder = struct {
-    demuxer: *Demuxer,
+    mediaCtx: *mctx.MediaContext,
     videoInfo: StreamContext,
     audioInfo: StreamContext,
 
     activeCodec: *ffmpeg.AVCodecContext = undefined,
     currentFrame: *ffmpeg.AVFrame,
 
-    pub fn init(demuxer: *Demuxer) !Decoder {
+    pub fn init(mediaCtx: *mctx.MediaContext) !Decoder {
         return .{
-            .demuxer = demuxer,
-            .videoInfo = try initVideoCodecContext(demuxer),
-            .audioInfo = try initAudioCodecContext(demuxer),
+            .mediaCtx = mediaCtx,
+            .videoInfo = try initVideoCodecContext(mediaCtx),
+            .audioInfo = try initAudioCodecContext(mediaCtx),
             .currentFrame = ffmpeg.av_frame_alloc(),
         };
     }
 
-    fn initVideoCodecContext(demuxer: *Demuxer) DecodingError!StreamContext {
-        return try initCodecContext(demuxer, ffmpeg.AVMEDIA_TYPE_VIDEO);
+    fn initVideoCodecContext(mediaCtx: *mctx.MediaContext) DecodingError!StreamContext {
+        return try initCodecContext(mediaCtx.videoStream);
     }
 
-    fn initAudioCodecContext(demuxer: *Demuxer) DecodingError!StreamContext {
-        return try initCodecContext(demuxer, ffmpeg.AVMEDIA_TYPE_AUDIO);
+    fn initAudioCodecContext(mediaCtx: *mctx.MediaContext) DecodingError!StreamContext {
+        return try initCodecContext(mediaCtx.audioStream);
     }
 
-    fn initCodecContext(demuxer: *Demuxer, codecType: c_int) DecodingError!StreamContext {
-        const avctx = demuxer.avctx.?;
-        var codec_id: c_uint = 0;
-        var stream_index: c_int = 0;
-        var codecpars: ?*ffmpeg.AVCodecParameters = null;
-
-        for (0..avctx.nb_streams) |i| {
-            if (avctx.streams[i].*.codecpar.*.codec_type == codecType) {
-                stream_index = avctx.streams[i].*.index;
-                codec_id = avctx.streams[i].*.codecpar.*.codec_id;
-                codecpars = avctx.streams[i].*.codecpar;
-                std.log.debug("codec_id: {d}, stream: {d}", .{ codec_id, i });
-            }
-        }
-
-        const codec = ffmpeg.avcodec_find_decoder(codec_id);
+    fn initCodecContext(stream: *ffmpeg.AVStream) DecodingError!StreamContext {
+        const codec = ffmpeg.avcodec_find_decoder(stream.codecpar.*.codec_id);
         const codecCtx = ffmpeg.avcodec_alloc_context3(codec);
-        if (codecpars) |pars| {
+        if (stream.codecpar) |pars| {
             const result = ffmpeg.avcodec_parameters_to_context(codecCtx, pars);
             if (result < 0) {
                 return DecodingError.DecoderNotFound;
@@ -69,7 +55,7 @@ pub const Decoder = struct {
             std.log.debug("decoder initialized: {s}", .{codecCtx.*.codec.*.long_name});
             return .{
                 .codec = codecCtx,
-                .stream_index = stream_index,
+                .stream = stream,
             };
         }
 
@@ -98,10 +84,10 @@ pub const Decoder = struct {
 
     /// determines if the audio or video codec context is needed
     fn selectCodec(self: *@This(), streamIndex: c_int) !*ffmpeg.AVCodecContext {
-        if (streamIndex == self.videoInfo.stream_index) {
+        if (streamIndex == self.videoInfo.stream.index) {
             return self.videoInfo.codec;
         }
-        if (streamIndex == self.audioInfo.stream_index) {
+        if (streamIndex == self.audioInfo.stream.index) {
             return self.audioInfo.codec;
         }
 

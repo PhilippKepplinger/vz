@@ -22,6 +22,7 @@ pub const FrameReader = struct {
         };
     }
 
+    /// feeds the decoder until a frame is ready and receives that frame
     pub fn next(self: *@This()) !*ffmpeg.AVFrame {
         try self.fillFrameBuffer();
         return try self.decoder.receiveFrame();
@@ -29,11 +30,8 @@ pub const FrameReader = struct {
 
     /// reads and decodes packets until a frame needs to be received, or EOF
     fn fillFrameBuffer(self: *@This()) !void {
-        var packetConsumed = try self.decoder.decodePacket(self.currentPacket);
-
-        while (packetConsumed) {
+        while (try self.decoder.decodePacket(self.currentPacket)) {
             self.currentPacket = try self.demuxer.readPacket();
-            packetConsumed = try self.decoder.decodePacket(self.currentPacket);
         }
     }
 };
