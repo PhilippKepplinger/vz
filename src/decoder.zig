@@ -16,14 +16,12 @@ pub const Decoder = struct {
     audioCodec: *ffmpeg.AVCodecContext,
 
     activeCodec: *ffmpeg.AVCodecContext = undefined,
-    currentFrame: *ffmpeg.AVFrame,
 
     pub fn init(mediaCtx: *mctx.MediaContext) !Decoder {
         return .{
             .mediaCtx = mediaCtx,
             .videoCodec = try initVideoCodecContext(mediaCtx),
             .audioCodec = try initAudioCodecContext(mediaCtx),
-            .currentFrame = ffmpeg.av_frame_alloc(),
         };
     }
 
@@ -90,7 +88,8 @@ pub const Decoder = struct {
     /// EAGAIN => no frame readey, use decodePacket to feed the decoder
     /// EOF => no more frames available
     pub fn receiveFrame(self: *@This()) !*ffmpeg.AVFrame {
-        const result = ffmpeg.avcodec_receive_frame(self.activeCodec, self.currentFrame);
+        const frame = ffmpeg.av_frame_alloc();
+        const result = ffmpeg.avcodec_receive_frame(self.activeCodec, frame);
         if (result == ffmpeg.AVERROR_EOF) {
             return error.EOF;
         }
@@ -98,6 +97,6 @@ pub const Decoder = struct {
             return error.EAGAIN;
         }
 
-        return self.currentFrame;
+        return frame;
     }
 };

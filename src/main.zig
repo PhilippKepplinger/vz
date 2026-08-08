@@ -30,7 +30,9 @@ pub fn main(init: std.process.Init) !void {
     var mediaCtx = try mctx.MediaContext.init(file_path);
     var demuxer = try Demuxer.init(&mediaCtx);
     var decoder = try Decoder.init(&mediaCtx);
-    var reader = try FrameReader.init(&demuxer, &decoder);
+
+    var frameBuffer: [48]*ffmpeg.AVFrame = undefined;
+    var reader = try FrameReader.init(io, frameBuffer[0..], &demuxer, &decoder);
     var frameRenderer = try FrameRenderer.init(io, arena, renderMode, &mediaCtx, renderBuffer[0..]);
     var scaler = try FrameScaler.init(
         decoder.videoCodec,
@@ -40,6 +42,7 @@ pub fn main(init: std.process.Init) !void {
     );
 
     try frameRenderer.clear();
+    const thread = try reader.start();
 
     const clock = std.Io.Clock.real;
     const frameTimeNs: i96 = @divTrunc(@as(i96, @intCast(mediaCtx.videoStream.time_base.num)) * 1_000_000_000, @as(i96, @intCast(mediaCtx.videoStream.time_base.den)));
@@ -93,10 +96,13 @@ pub fn main(init: std.process.Init) !void {
         }
     } else |err| {
         if (err == error.EOF) {
+            thread.detach();
+            mediaCtx.close();
             std.log.info("\nEOF reached", .{});
         }
     }
 
+    thread.detach();
     mediaCtx.close();
 }
 

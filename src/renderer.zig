@@ -16,6 +16,7 @@ pub const FrameRenderer = struct {
     ws: std.posix.winsize = undefined,
     writer: std.Io.File.Writer,
     frameBuffer: std.ArrayList(u8),
+    lastBrightness: u8 = 0,
 
     pub fn init(io: std.Io, allocator: std.mem.Allocator, mode: RenderMode, mediaCtx: *mctx.MediaContext, buffer: []u8) !FrameRenderer {
         var ws: std.posix.winsize = undefined;
@@ -91,14 +92,18 @@ pub const FrameRenderer = struct {
         const brightness = getReducedBrightness(level);
         const char = getChar(top, bottom, brightness);
 
-        self.frameBuffer.printAssumeCapacity(
-            "\x1b[38;2;{};{};{}m{c}",
-            .{ brightness, brightness, brightness, char },
-        );
+        if (self.lastBrightness == brightness) {
+            self.frameBuffer.appendAssumeCapacity(char);
+        } else {
+            self.frameBuffer.printAssumeCapacity(
+                "\x1b[38;2;{};{};{}m{c}",
+                .{ brightness, brightness, brightness, char },
+            );
+        }
     }
 
-    fn getAvgLevel(top: u8, bottom: u8) u16 {
-        return (@as(u16, top) + @as(u16, bottom)) / 2;
+    fn getAvgLevel(top: u8, bottom: u8) u8 {
+        return @intCast((@as(u16, top) + @as(u16, bottom)) / 2);
     }
 
     fn getReducedBrightness(level: u16) u8 {
