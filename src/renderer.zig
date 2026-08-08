@@ -9,13 +9,15 @@ pub const RenderMode = enum {
 };
 
 pub const FrameRenderer = struct {
+    io: std.Io,
+    allocator: std.mem.Allocator,
     mediaCtx: *mctx.MediaContext,
     mode: RenderMode,
     ws: std.posix.winsize = undefined,
-    io: std.Io,
     writer: std.Io.File.Writer,
+    frameBuffer: std.ArrayList(u8),
 
-    pub fn init(io: std.Io, mode: RenderMode, mediaCtx: *mctx.MediaContext, buffer: []u8) FrameRenderer {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, mode: RenderMode, mediaCtx: *mctx.MediaContext, buffer: []u8) !FrameRenderer {
         var ws: std.posix.winsize = undefined;
         retrieveTerminalSize(&ws);
 
@@ -23,9 +25,11 @@ pub const FrameRenderer = struct {
 
         return .{
             .io = io,
-            .ws = ws,
+            .allocator = allocator,
             .mediaCtx = mediaCtx,
+            .ws = ws,
             .mode = mode,
+            .frameBuffer = try .initCapacity(allocator, 4096 * 1024),
             .writer = std.Io.File.stdout().writer(io, buffer),
         };
     }
@@ -60,32 +64,35 @@ pub const FrameRenderer = struct {
                 const bottom = pixels[(2 * row + 1) * linesize + col];
 
                 switch (self.mode) {
-                    RenderMode.GRAY => try self.renderGray(top, bottom),
-                    RenderMode.ASCII => try self.renderASCII(top, bottom),
+                    RenderMode.GRAY => self.renderGray(top, bottom),
+                    RenderMode.ASCII => self.renderASCII(top, bottom),
                 }
             }
 
             // line break until in the last line
             if (row < self.height() - 1) {
-                try self.writer.interface.writeByte('\n');
+                try self.frameBuffer.append(self.allocator, '\n');
             }
         }
+
+        try self.writer.interface.writeAll(self.frameBuffer.items);
+        self.frameBuffer.clearRetainingCapacity();
     }
 
-    fn renderGray(self: *@This(), top: u8, bottom: u8) !void {
-        try self.writer.interface.print(
+    fn renderGray(self: *@This(), top: u8, bottom: u8) void {
+        self.frameBuffer.printAssumeCapacity(
             "\x1b[38;2;{};{};{}m\x1b[48;2;{};{};{}m{u}",
             .{ top, top, top, bottom, bottom, bottom, '▀' },
         );
     }
 
-    fn renderASCII(self: *@This(), top: u8, bottom: u8) !void {
+    fn renderASCII(self: *@This(), top: u8, bottom: u8) void {
         const level = getAvgLevel(top, bottom);
         const brightness = getReducedBrightness(level);
         const char = getChar(top, bottom, brightness);
 
-        try self.writer.interface.print(
-            "\x1b[38;2;{};{};{}m{u}",
+        self.frameBuffer.printAssumeCapacity(
+            "\x1b[38;2;{};{};{}m{c}",
             .{ brightness, brightness, brightness, char },
         );
     }
@@ -107,7 +114,7 @@ pub const FrameRenderer = struct {
         };
     }
 
-    fn getChar(top: u8, bottom: u8, level: u8) u21 {
+    fn getChar(top: u8, bottom: u8, level: u8) u8 {
         const i = @divTrunc(level, 31) - 1;
         // evaluate pixel
         const veryTopHeavy = top > bottom and top - bottom > 80;
