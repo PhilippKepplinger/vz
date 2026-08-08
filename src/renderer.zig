@@ -9,25 +9,34 @@ pub const RenderMode = enum {
 };
 
 pub const FrameRenderer = struct {
+    io: std.Io,
+    allocator: std.mem.Allocator,
     mediaCtx: *mctx.MediaContext,
     mode: RenderMode,
     ws: std.posix.winsize = undefined,
-    io: std.Io,
     writer: std.Io.File.Writer,
+    frameBuffer: std.ArrayList(u8),
+    lastBrightness: u8 = 0,
 
-    pub fn init(io: std.Io, mode: RenderMode, mediaCtx: *mctx.MediaContext, buffer: []u8) FrameRenderer {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, mode: RenderMode, mediaCtx: *mctx.MediaContext, buffer: []u8) !FrameRenderer {
         var ws: std.posix.winsize = undefined;
-        _ = std.os.linux.ioctl(std.posix.STDOUT_FILENO, std.os.linux.T.IOCGWINSZ, @intFromPtr(&ws));
+        retrieveTerminalSize(&ws);
 
         std.log.debug("window size: {d}x{d}", .{ ws.col, ws.row });
 
         return .{
             .io = io,
-            .ws = ws,
+            .allocator = allocator,
             .mediaCtx = mediaCtx,
-            .writer = std.Io.File.stdout().writer(io, buffer),
+            .ws = ws,
             .mode = mode,
+            .frameBuffer = try .initCapacity(allocator, 4096 * 1024),
+            .writer = std.Io.File.stdout().writer(io, buffer),
         };
+    }
+
+    fn retrieveTerminalSize(ws: *std.posix.winsize) void {
+        _ = std.os.linux.ioctl(std.posix.STDOUT_FILENO, std.os.linux.T.IOCGWINSZ, @intFromPtr(ws));
     }
 
     pub fn width(self: *@This()) u16 {
@@ -46,47 +55,55 @@ pub const FrameRenderer = struct {
         const pixels = frame.data[0];
         const linesize: usize = @intCast(frame.linesize[0]);
 
-        const terminalHeight: usize = @as(u64, @intCast(frame.height)) / 2;
-        for (0..terminalHeight) |row| {
-            for (0..@intCast(frame.width)) |col| {
-                if (col >= self.width()) {
-                    continue;
-                }
+        retrieveTerminalSize(&self.ws);
+        const renderHeight: usize = @intCast(@min(self.height(), @as(u64, @intCast(frame.height)) / 2));
+        const renderWidth: usize = @intCast(@min(self.width(), frame.width));
+
+        for (0..renderHeight) |row| {
+            for (0..renderWidth) |col| {
                 const top = pixels[2 * row * linesize + col];
                 const bottom = pixels[(2 * row + 1) * linesize + col];
 
                 switch (self.mode) {
-                    RenderMode.GRAY => try self.renderGray(top, bottom),
-                    RenderMode.ASCII => try self.renderASCII(top, bottom),
+                    RenderMode.GRAY => self.renderGray(top, bottom),
+                    RenderMode.ASCII => self.renderASCII(top, bottom),
                 }
             }
 
+            // line break until in the last line
             if (row < self.height() - 1) {
-                try self.writer.interface.writeByte('\n');
+                try self.frameBuffer.append(self.allocator, '\n');
             }
         }
+
+        try self.writer.interface.writeAll(self.frameBuffer.items);
+        self.frameBuffer.clearRetainingCapacity();
     }
 
-    fn renderGray(self: *@This(), top: u8, bottom: u8) !void {
-        try self.writer.interface.print(
+    fn renderGray(self: *@This(), top: u8, bottom: u8) void {
+        self.frameBuffer.printAssumeCapacity(
             "\x1b[38;2;{};{};{}m\x1b[48;2;{};{};{}m{u}",
             .{ top, top, top, bottom, bottom, bottom, '▀' },
         );
     }
 
-    fn renderASCII(self: *@This(), top: u8, bottom: u8) !void {
+    fn renderASCII(self: *@This(), top: u8, bottom: u8) void {
         const level = getAvgLevel(top, bottom);
         const brightness = getReducedBrightness(level);
         const char = getChar(top, bottom, brightness);
 
-        try self.writer.interface.print(
-            "\x1b[38;2;{};{};{}m{u}",
-            .{ brightness, brightness, brightness, char },
-        );
+        if (self.lastBrightness == brightness) {
+            self.frameBuffer.appendAssumeCapacity(char);
+        } else {
+            self.frameBuffer.printAssumeCapacity(
+                "\x1b[38;2;{};{};{}m{c}",
+                .{ brightness, brightness, brightness, char },
+            );
+        }
     }
 
-    fn getAvgLevel(top: u8, bottom: u8) u16 {
-        return (@as(u16, top) + @as(u16, bottom)) / 2;
+    fn getAvgLevel(top: u8, bottom: u8) u8 {
+        return @intCast((@as(u16, top) + @as(u16, bottom)) / 2);
     }
 
     fn getReducedBrightness(level: u16) u8 {
@@ -102,7 +119,7 @@ pub const FrameRenderer = struct {
         };
     }
 
-    fn getChar(top: u8, bottom: u8, level: u8) u21 {
+    fn getChar(top: u8, bottom: u8, level: u8) u8 {
         const i = @divTrunc(level, 31) - 1;
         // evaluate pixel
         const veryTopHeavy = top > bottom and top - bottom > 80;
@@ -123,15 +140,6 @@ pub const FrameRenderer = struct {
         }
     }
 
-    fn brightnessLevel(value: u8) u8 {
-        return switch (value) {
-            0...63 => 0,
-            64...127 => 1,
-            128...191 => 2,
-            else => 3,
-        };
-    }
-
     pub fn clear(self: *@This()) !void {
         try self.writer.interface.writeAll("\x1b[2J");
     }
@@ -141,10 +149,12 @@ pub const FrameRenderer = struct {
         try self.writer.interface.writeByte(char);
     }
 
+    /// moves the cursor to the top left corner
     fn toHome(self: *@This()) !void {
         try self.writer.interface.writeAll("\x1b[H");
     }
 
+    /// moves cursor to the specified position
     fn moveTo(self: *@This(), row: usize, col: usize) !void {
         try self.writer.interface.print("\x1b[{};{}H", .{ row + 1, col + 1 });
     }
