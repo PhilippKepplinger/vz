@@ -14,8 +14,14 @@ pub const FrameScaler = struct {
 
         std.log.debug("scaler format: {d}x{d}", .{ destWidth, destHeight });
 
+        // init scaled frame reference
+        const scaledFrame = ffmpeg.av_frame_alloc();
+        scaledFrame.*.width = width;
+        scaledFrame.*.height = height;
+        scaledFrame.*.format = format;
+
         return .{
-            .scaledFrame = ffmpeg.av_frame_alloc(),
+            .scaledFrame = scaledFrame,
             .swsctx = ffmpeg.sws_getContext(
                 srcCodec.width,
                 srcCodec.height,

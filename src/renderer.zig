@@ -17,7 +17,7 @@ pub const FrameRenderer = struct {
 
     pub fn init(io: std.Io, mode: RenderMode, mediaCtx: *mctx.MediaContext, buffer: []u8) FrameRenderer {
         var ws: std.posix.winsize = undefined;
-        _ = std.os.linux.ioctl(std.posix.STDOUT_FILENO, std.os.linux.T.IOCGWINSZ, @intFromPtr(&ws));
+        retrieveTerminalSize(&ws);
 
         std.log.debug("window size: {d}x{d}", .{ ws.col, ws.row });
 
@@ -25,9 +25,13 @@ pub const FrameRenderer = struct {
             .io = io,
             .ws = ws,
             .mediaCtx = mediaCtx,
-            .writer = std.Io.File.stdout().writer(io, buffer),
             .mode = mode,
+            .writer = std.Io.File.stdout().writer(io, buffer),
         };
+    }
+
+    fn retrieveTerminalSize(ws: *std.posix.winsize) void {
+        _ = std.os.linux.ioctl(std.posix.STDOUT_FILENO, std.os.linux.T.IOCGWINSZ, @intFromPtr(ws));
     }
 
     pub fn width(self: *@This()) u16 {
@@ -46,12 +50,12 @@ pub const FrameRenderer = struct {
         const pixels = frame.data[0];
         const linesize: usize = @intCast(frame.linesize[0]);
 
-        const terminalHeight: usize = @as(u64, @intCast(frame.height)) / 2;
-        for (0..terminalHeight) |row| {
-            for (0..@intCast(frame.width)) |col| {
-                if (col >= self.width()) {
-                    continue;
-                }
+        retrieveTerminalSize(&self.ws);
+        const renderHeight: usize = @intCast(@min(self.height(), @as(u64, @intCast(frame.height)) / 2));
+        const renderWidth: usize = @intCast(@min(self.width(), frame.width));
+
+        for (0..renderHeight) |row| {
+            for (0..renderWidth) |col| {
                 const top = pixels[2 * row * linesize + col];
                 const bottom = pixels[(2 * row + 1) * linesize + col];
 
@@ -61,6 +65,7 @@ pub const FrameRenderer = struct {
                 }
             }
 
+            // line break until in the last line
             if (row < self.height() - 1) {
                 try self.writer.interface.writeByte('\n');
             }
@@ -123,15 +128,6 @@ pub const FrameRenderer = struct {
         }
     }
 
-    fn brightnessLevel(value: u8) u8 {
-        return switch (value) {
-            0...63 => 0,
-            64...127 => 1,
-            128...191 => 2,
-            else => 3,
-        };
-    }
-
     pub fn clear(self: *@This()) !void {
         try self.writer.interface.writeAll("\x1b[2J");
     }
@@ -141,10 +137,12 @@ pub const FrameRenderer = struct {
         try self.writer.interface.writeByte(char);
     }
 
+    /// moves the cursor to the top left corner
     fn toHome(self: *@This()) !void {
         try self.writer.interface.writeAll("\x1b[H");
     }
 
+    /// moves cursor to the specified position
     fn moveTo(self: *@This(), row: usize, col: usize) !void {
         try self.writer.interface.print("\x1b[{};{}H", .{ row + 1, col + 1 });
     }
