@@ -89,6 +89,9 @@ pub fn main(init: std.process.Init) !void {
             perfRender = clock.now(io).toMilliseconds() - perfStart;
             //std.log.debug("render: {d} ms", .{perfRender});
 
+            var tmp: ?*ffmpeg.AVFrame = frame;
+            ffmpeg.av_frame_free(&tmp);
+
             perfStart = clock.now(io).toMilliseconds();
         } else {
             //std.log.debug("decode audio: {d} ms", .{perfDecode});
